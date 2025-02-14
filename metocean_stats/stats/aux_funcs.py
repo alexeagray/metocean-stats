@@ -85,9 +85,9 @@ def Weibull_method_of_moment(X):
   
     return cHat, aHat, bHat # shape, location, scale
 
-def add_direction_sector(data,var_dir):
-    direction_bins = np.arange(15, 360, 30)
-    direction_labels = [value for value in np.arange(30, 360, 30)]
+def add_direction_sector(data,var_dir,sector_deg=30):
+    direction_bins = np.arange(sector_deg/2, 360, sector_deg)
+    direction_labels = [value for value in np.arange(sector_deg, 360, sector_deg)]
     data['direction_sector'] = pd.Series(np.nan, index=data.index)
     for i in range(len(direction_bins)-1):
         condition = (data[var_dir] > direction_bins[i]) & (data[var_dir] <= direction_bins[i + 1])

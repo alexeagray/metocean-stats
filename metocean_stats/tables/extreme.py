@@ -89,10 +89,10 @@ def table_monthly_return_periods(data, var='hs', periods=[1, 10, 100, 10000],dis
     
     return df
 
-def table_directional_return_periods(data: pd.DataFrame, var='hs', var_dir='dir', periods=[1, 10, 100, 10000], distribution='Weibull3P_MOM', units='m',adjustment='NORSOK',method='default', threshold='default',output_file='directional_extremes_weibull.csv'):
-    params, return_periods, sector_prob,  threshold_values, num_events_per_year = directional_extremes(data=data, var=var, var_dir=var_dir, periods=periods,distribution=distribution, adjustment=adjustment, method=method, threshold=threshold)    
+def table_directional_return_periods(data: pd.DataFrame, var='hs', var_dir='dir', periods=[1, 10, 100, 10000], sector_deg: int=30, distribution='Weibull3P_MOM', units='m',adjustment='NORSOK',method='default', threshold='default',output_file='directional_extremes_weibull.csv'):
+    params, return_periods, sector_prob,  threshold_values, num_events_per_year,*aux = directional_extremes(data=data, var=var, var_dir=var_dir, periods=periods,sector_deg=sector_deg,distribution=distribution, adjustment=adjustment, method=method, threshold=threshold)    
 
-    dir = ['-'] + [str(angle) + '°' for angle in np.arange(0,360,30)] + ['Omni']
+    dir = ['-'] + [str(angle) + '°' for angle in np.arange(0,360,sector_deg)] + ['Omni']
     # Initialize lists to store table data
     sector_prob = ['%'] + [round(value, 2) for value in sector_prob] + [100.00]
     shape = ['-'] + [round(shape, 3) if isinstance(shape, (int, float)) else shape for shape, _, _ in params]    
@@ -108,6 +108,13 @@ def table_directional_return_periods(data: pd.DataFrame, var='hs', var_dir='dir'
         'Scale': scale,
         'Location': location,
     }
+
+    if aux:
+        table_data["Selected peaks threshold"] = [units] + aux[3]
+        table_data["R squared"] = ["-"] + aux[0]
+        table_data["p value"] = ["-"] + aux[1]
+        table_data["No. of extremes"] = ["-"] + aux[2]
+
 
     if threshold_values:
         table_data['Threshold'] = [units] + [round(x, 2) for x in threshold_values]
@@ -164,20 +171,18 @@ def table_monthly_joint_distribution_Hs_Tp_return_values(data,var_hs='hs',var_tp
 
     return df
     
-def table_directional_joint_distribution_Hs_Tp_return_values(data,var_hs='hs',var_tp='tp',var_dir='pdir',periods=[1,10,100,10000],adjustment='NORSOK', output_file='directional_Hs_Tp_joint_reurn_values.csv'):
-    weibull_params, return_periods, sector_prob, threshold_values, num_events_per_year = directional_extremes(data=data, var=var_hs, var_dir=var_dir, periods=periods,distribution='Weibull3P_MOM', adjustment=adjustment)
+def table_directional_joint_distribution_Hs_Tp_return_values(data,var_hs='hs',var_tp='tp',var_dir='pdir',periods=[1,10,100,10000],sector_deg:int=30, adjustment='NORSOK', output_file='directional_Hs_Tp_joint_reurn_values.csv'):
+    weibull_params, return_periods, sector_prob, threshold_values, num_events_per_year,*_ = directional_extremes(data=data, var=var_hs, var_dir=var_dir, periods=periods,sector_deg=sector_deg,distribution='Weibull3P_MOM', adjustment=adjustment)
 
-    dir = ['-'] + [str(angle) + '°' for angle in np.arange(0,360,30)] + ['Omni']    
-    dir = ['-'] + [str(angle) + '°' for angle in np.arange(0,360,30)] + ['Omni']
     # Initialize lists to store table data
     sector_prob =  [round(value, 2) for value in sector_prob] + [100.00]
-    rv_hs = np.zeros((13,len(periods)))
-    rv_tp = np.zeros((13,len(periods)))
-    dir_label = [str(angle) + '°' for angle in np.arange(0,360,30)] + ['Omni']
+    rv_hs = np.zeros((len(sector_prob),len(periods)))
+    rv_tp = np.zeros((len(sector_prob),len(periods)))
+    dir_label = [str(angle) + '°' for angle in np.arange(0,360,sector_deg)] + ['Omni']
 
-    add_direction_sector(data=data,var_dir=var_dir)
+    add_direction_sector(data=data,var_dir=var_dir,sector_deg=sector_deg)
     k=0
-    for dir in range(0,360,30):
+    for dir in range(0,360,sector_deg):
         k=k+1
         sector_data = data[data['direction_sector']==dir]
         a1, a2, a3, b1, b2, b3, pdf_Hs, h, t3,h3,X,hs_tpl_tph  =  joint_distribution_Hs_Tp(data=sector_data,var_hs=var_hs,var_tp=var_tp,periods=periods,adjustment=adjustment)
@@ -188,12 +193,12 @@ def table_directional_joint_distribution_Hs_Tp_return_values(data,var_hs='hs',va
     #append annual
     a1, a2, a3, b1, b2, b3, pdf_Hs, h, t3,h3,X,hs_tpl_tph  =  joint_distribution_Hs_Tp(data=data,var_hs=var_hs,var_tp=var_tp,periods=periods,adjustment=None)
     for i in range(len(periods)):
-        rv_hs[12,i] = round(hs_tpl_tph['hs_'+str(periods[i])].max(),2)
-        rv_tp[12,i] = round(hs_tpl_tph['t2_'+str(periods[i])].where(hs_tpl_tph['hs_'+str(periods[i])]==hs_tpl_tph['hs_'+str(periods[i])].max()).max(),2)
+        rv_hs[-1,i] = round(hs_tpl_tph['hs_'+str(periods[i])].max(),2)
+        rv_tp[-1,i] = round(hs_tpl_tph['t2_'+str(periods[i])].where(hs_tpl_tph['hs_'+str(periods[i])]==hs_tpl_tph['hs_'+str(periods[i])].max()).max(),2)
 
     # Define the threshold values (annual values) for each column
-    thresholds_hs = rv_hs[12,:]
-    thresholds_tp = rv_tp[12,:]
+    thresholds_hs = rv_hs[-1,:]
+    thresholds_tp = rv_tp[-1,:]
 
     # Replace values in each column that exceed the thresholds
     for col in range(rv_hs.shape[1]):
