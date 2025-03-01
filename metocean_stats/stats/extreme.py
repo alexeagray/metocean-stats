@@ -4,6 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import xarray as xr
 from .aux_funcs import *
+from pandas.api.types import is_list_like
 
 
 def return_levels_pot(data, var, dist='Weibull_2P', 
@@ -530,6 +531,7 @@ def RVE_pyextremes(dataframe, var='hs',periods=[1,10,100,1000],threshold="defaul
             observed_return_values.loc[:,"exceedance probability"].values
         )
     )
+    rmse = np.sqrt(np.power(observed - theoretical,2).mean())
 
     pearsonr, p_value = stats.pearsonr(theoretical, observed)
 
@@ -538,14 +540,21 @@ def RVE_pyextremes(dataframe, var='hs',periods=[1,10,100,1000],threshold="defaul
     values = summary["return value"].values
     
     
-    loc = model.model.fit_parameters.get("c",None)
-    scale = model.model.fit_parameters.get("scale",None)
-    shape = model.model.fit_parameters.get("shape",None)
+    loc = model.model.fit_parameters.get(
+        "loc",
+        model.model.distribution.fixed_parameters.get("floc",None)
+    )
+    scale = model.model.fit_parameters.get(
+        "scale",
+        model.model.distribution.fixed_parameters.get("fscale",None)
+    )
+    shape = model.model.fit_parameters.get(
+        "c",
+        model.model.distribution.fixed_parameters.get("fc",None)
+    )
 
-    return shape, loc, scale, values, pearsonr, p_value, len(model.extremes), threshold
 
-
-
+    return shape, loc, scale, values, pearsonr, p_value, rmse, len(model.extremes), threshold
 
 
 
@@ -562,7 +571,7 @@ def RVE_ALL(dataframe,var='hs',periods=[1,10,100,1000],distribution='Weibull3P',
     from pyextremes import get_extremes, EVA
     shape, loc, scale = [], [], []
     periods = np.array(periods)
-    it_selected_max = dataframe.groupby(dataframe.index.year)[var].idxmax().valuesŸ
+    it_selected_max = dataframe.groupby(dataframe.index.year)[var].idxmax().values
     df = dataframe[var]
     
     period = periods
@@ -887,26 +896,29 @@ def directional_extremes(data: pd.DataFrame, var: str, var_dir: str, sector_deg:
     return_values = []
     pearsonrs =[]
     p_values = []
+    rmses = []
     nextremes =[]
-    POthresholds = []
 
     add_direction_sector(data=data,var_dir=var_dir,sector_deg=sector_deg)
     # time step between each data, in hours
     time_step = ((data.index[-1]-data.index[0]).days + 1)*24/data.shape[0]
     
-    for dir in range(0,360,sector_deg):
+    for n,dir in enumerate(range(0,360,sector_deg)):
         sector_data = data[data['direction_sector']==dir]
         if sector_data.empty:
             sector_data = data * 0 # fill with zeros, this will give 0 extremes for empety sectors
 
         if isinstance(threshold, str) and threshold.startswith('P'):
             threshold_value = sector_data[var].quantile(int(threshold.split('P')[1])/100)
-            threshold_values.append(threshold_value)
             # Calculate the number of events exceeding a threshold:
             num_years = (sector_data.index[-1]  - sector_data.index[0] ).days / 365.25  # Using 365.25 to account for leap years
             num_events_per_year.append((sector_data[var] >= threshold_value).sum()/num_years)
+        elif is_list_like(threshold):
+            threshold_value = threshold[n]
         else:
             threshold_value = threshold
+        
+        threshold_values.append(threshold_value)
 
         periods_adj = [x * int(360/sector_deg)/2 for x in periods]#*24*365.2422/time_step
         periods_noadj = periods#*24*365.2422/time_step
@@ -925,17 +937,18 @@ def directional_extremes(data: pd.DataFrame, var: str, var_dir: str, sector_deg:
         elif method == 'POT':
             shape, loc, scale, value = RVE_ALL(sector_data,var=var,periods=periods_adj,distribution=distribution,method=method,threshold=threshold_value)
         elif method == 'POT_pyextremes':
-            shape, loc, scale, value, pearsonr, p_value, nextreme, POthreshold = RVE_pyextremes(sector_data,var=var,periods=periods_adj)
+            shape, loc, scale, value, pearsonr, p_value, rmse, nextreme, POthreshold = RVE_pyextremes(sector_data,var=var,periods=periods_adj, threshold=threshold_value)
+            threshold_values[n] = POthreshold
             if dir == 0:
                 nextremes = [nextreme]
                 pearsonrs = [pearsonr]
                 p_values = [p_value]
-                POthresholds = [POthreshold]
+                rmses = [rmse]
             else:
                 nextremes.append(nextreme)
                 pearsonrs.append(pearsonr)
                 p_values.append(p_value)
-                POthresholds.append(POthreshold)
+                rmses.append(rmse)
 
     
         sp = 100*len(sector_data)/len(data[var])
@@ -946,12 +959,15 @@ def directional_extremes(data: pd.DataFrame, var: str, var_dir: str, sector_deg:
     # add annual
     if isinstance(threshold, str) and threshold.startswith('P'):
         threshold_value = data[var].quantile(int(threshold.split('P')[1])/100)
-        threshold_values.append(threshold_value)
         # Calculate the number of events exceeding a threshold:
         num_years = (data.index[-1]  - data.index[0] ).days / 365.25  # Using 365.25 to account for leap years
         num_events_per_year.append((data[var] >= threshold_value).sum()/num_years)
+    elif is_list_like(threshold):
+        threshold_value = threshold[n+1]
     else:
         threshold_value = threshold
+
+    threshold_values.append(threshold_value)
 
     if method == 'minimum':
         shape, loc, scale, value = RVE_ALL(data.resample('YE').min(),var=var,periods=periods,distribution=distribution,method='default',threshold=threshold_value)
@@ -962,11 +978,12 @@ def directional_extremes(data: pd.DataFrame, var: str, var_dir: str, sector_deg:
     elif method == 'POT':
         shape, loc, scale, value = RVE_ALL(data,var=var,periods=periods,distribution=distribution,method=method,threshold=threshold_value)
     elif method == 'POT_pyextremes':
-        shape, loc, scale, value, pearsonr, p_value, nextreme, POthreshold = RVE_pyextremes(data,var=var,periods=periods)
+        shape, loc, scale, value, pearsonr, p_value, rmse, nextreme, POthreshold = RVE_pyextremes(data,var=var,periods=periods)
         nextremes.append(nextreme)
         pearsonrs.append(pearsonr)
         p_values.append(p_value)
-        POthresholds.append(POthreshold)
+        rmses.append(rmse)
+        threshold_values[n+1] = POthreshold
     
     params.append((shape, loc, scale))
     return_values.append(value)
@@ -978,7 +995,7 @@ def directional_extremes(data: pd.DataFrame, var: str, var_dir: str, sector_deg:
     for col in range(return_values.shape[1]):
         return_values[:, col] = np.minimum(return_values[:, col], thresholds[col])
 
-    return params, return_values, sector_prob,  threshold_values, num_events_per_year, pearsonrs, p_values, nextremes, POthresholds
+    return params, return_values, sector_prob,  threshold_values, num_events_per_year, pearsonrs, p_values, rmses, nextremes
 
 def monthly_joint_distribution_Hs_Tp_weibull(data, var='hs', periods=[1, 10, 100, 10000]):
     from scipy.stats import weibull_min
